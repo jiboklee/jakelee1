@@ -5,16 +5,19 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# 기본 루트 라우트 추가 → Render 헬스체크 통과 목적
+@app.route('/')
+def index():
+    return 'Webhook server is running.'
+
 # 환경 변수에서 API 키 읽기
 API_KEY = os.environ.get('API_KEY')
 API_SECRET = os.environ.get('API_SECRET')
 
-# 필수 환경 변수 체크
 if not API_KEY or not API_SECRET:
-    print("❌ ERROR: API_KEY or API_SECRET is not set. Please configure environment variables.")
-    exit(1)  # 실행 중지 (API 키 없이 동작할 수 없으므로)
+    print("❌ ERROR: API_KEY or API_SECRET is not set.")
+    exit(1)
 
-# Binance API URL 설정 (현물 시장)
 BINANCE_API_URL = "https://api.binance.com/api/v3/order"
 
 @app.route('/webhook', methods=['POST'])
@@ -55,7 +58,7 @@ def webhook():
 
     return jsonify({"status": "success", "binance_order": result}), 200
 
-# Render 배포용 포트 지정
+# 반드시 Render가 지정한 포트로 실행
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))  # Render가 자동으로 이 환경변수를 줌
+    port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
