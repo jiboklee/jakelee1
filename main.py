@@ -1,54 +1,48 @@
-from flask import Flask, request, jsonify
-import hmac
-import hashlib
-import time
-import requests
+# main.py
+from flask import Flask, request
+import hmac, hashlib, time, requests, os
 
 app = Flask(__name__)
 
-# --- 바이낸스 API 설정 (선물 전용) ---
-BINANCE_API_KEY = "여기에_본인_API"
-BINANCE_SECRET = "여기에_본인_SECRET"
-BASE_URL = "https://fapi.binance.com"
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("API_SECRET")
 
-# --- 진입 파라미터 ---
-SYMBOL = "BTCUSDT"  # 또는 ETHUSDT 등 원하는 종목
-QUANTITY = 0.01      # 진입 수량 (레버리지 고려해서 설정)
-
-
-def get_headers(query_string):
-    timestamp = int(time.time() * 1000)
-    query_string += f"&timestamp={timestamp}"
-    signature = hmac.new(BINANCE_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
-    headers = {
-        "X-MBX-APIKEY": BINANCE_API_KEY
-    }
-    return query_string + f"&signature={signature}", headers
-
-
-def place_futures_order(side):
-    query = f"symbol={SYMBOL}&side={side}&type=MARKET&quantity={QUANTITY}"
-    signed_query, headers = get_headers(query)
-    url = f"{BASE_URL}/fapi/v1/order?{signed_query}"
-    res = requests.post(url, headers=headers)
-    print(res.json())
-    return res.json()
-
-
-@app.route("/", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    signal = data.get("signal", "")
+    symbol = data['symbol']
+    side = data['action'].upper()
+    amount = 30  # USDT 고정 기준
 
-    if signal == "LONG_SIGNAL":
-        result = place_futures_order("BUY")
-        return jsonify({"result": result}), 200
-    elif signal == "SHORT_SIGNAL":
-        result = place_futures_order("SELL")
-        return jsonify({"result": result}), 200
-    else:
-        return jsonify({"error": "Unknown signal"}), 400
+    order = place_order(symbol, side, amount)
+    return {'status': 'ok', 'detail': order}
 
+def place_order(symbol, side, amount_usdt):
+    url = 'https://fapi.binance.com/fapi/v1/order'
+    timestamp = int(time.time() * 1000)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    price = get_price(symbol)
+    quantity = round(amount_usdt / price, 3)
+
+    params = {
+        'symbol': symbol,
+        'side': 'BUY' if side == 'BUY' else 'SELL',
+        'type': 'MARKET',
+        'quantity': quantity,
+        'timestamp': timestamp
+    }
+
+    query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+    signature = hmac.new(API_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+    headers = {"X-MBX-APIKEY": API_KEY}
+
+    params['signature'] = signature
+    response = requests.post(url, headers=headers, params=params)
+    return response.json()
+
+def get_price(symbol):
+    url = f'https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}'
+    return float(requests.get(url).json()['price'])
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
