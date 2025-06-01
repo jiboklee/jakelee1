@@ -1,74 +1,68 @@
 from flask import Flask, request, jsonify
-import requests
 import hmac
 import hashlib
 import time
+import requests
 import os
 
 app = Flask(__name__)
 
-# 바이낸스 API 키 (직접 입력하거나 Render 환경변수로 설정)
-API_KEY = os.getenv('BINANCE_API_KEY')
-API_SECRET = os.getenv('BINANCE_API_SECRET')
+# 🔐 환경변수에서 API 키 불러오기 (Render에서는 환경설정에 등록)
+API_KEY = os.getenv("BINANCE_API_KEY")
+API_SECRET = os.getenv("BINANCE_API_SECRET")
 
-BASE_URL = 'https://fapi.binance.com'  # 선물 API endpoint
+# 바이낸스 URL
+BASE_URL = "https://fapi.binance.com"
 
-# 시그니처 생성 함수
-def create_signature(query_string):
-    return hmac.new(API_SECRET.encode(), query_string.encode(), hashlib.sha256).hexdigest()
-
-# 실제 바이낸스 주문 전송 함수
 def place_order(symbol, side, quantity):
-    path = '/fapi/v1/order'
-    timestamp = int(time.time() * 1000)
+    try:
+        # 바이낸스 파라미터 구성
+        endpoint = "/fapi/v1/order"
+        url = BASE_URL + endpoint
 
-    params = {
-        'symbol': symbol.upper(),
-        'side': 'BUY' if side.lower() == 'long' else 'SELL',
-        'type': 'MARKET',
-        'quantity': quantity,
-        'timestamp': timestamp
-    }
+        timestamp = int(time.time() * 1000)
+        params = f"symbol={symbol}&side={side.upper()}&type=MARKET&quantity={quantity}&timestamp={timestamp}"
+        signature = hmac.new(API_SECRET.encode(), params.encode(), hashlib.sha256).hexdigest()
 
-    query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
-    signature = create_signature(query_string)
-    params['signature'] = signature
+        final_url = f"{url}?{params}&signature={signature}"
+        headers = {"X-MBX-APIKEY": API_KEY}
 
-    headers = {
-        'X-MBX-APIKEY': API_KEY
-    }
-
-    response = requests.post(BASE_URL + path, params=params, headers=headers)
-
-    if response.status_code == 200:
+        response = requests.post(final_url, headers=headers)
         return response.json()
-    else:
-        raise Exception(response.text)
+    except Exception as e:
+        print("🚨 주문 실패:", str(e))
+        return {"error": str(e)}
 
 @app.route('/')
 def home():
-    return '🔥 Binance Futures Auto Trader is Running!'
+    return "✅ Binance Futures Auto Trade Server Running"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        data = request.json
-        print("📩 Webhook received:", data)
+        data = request.get_json(force=True)
+        if not data:
+            return "⚠️ No JSON received", 400
 
         symbol = data.get('symbol')
-        action = data.get('action')  # "long" or "short"
-        amount = float(data.get('amount'))
+        action = data.get('action')  # long 또는 short
+        amount = float(data.get('amount', 0))
 
-        if not symbol or not action or not amount:
-            raise ValueError("Missing required field(s)")
+        if not all([symbol, action, amount]):
+            return "⚠️ Missing one or more required fields", 400
 
-        result = place_order(symbol, action, amount)
-        print("✅ Order success:", result)
-        return jsonify({'status': 'success', 'order': result})
+        # 롱/숏 구분
+        side = "BUY" if action.lower() == "long" else "SELL"
+        result = place_order(symbol.upper(), side, amount)
+
+        print(f"📤 주문 요청: {symbol} | {action} | {amount}")
+        print("📥 응답:", result)
+
+        return jsonify(result)
 
     except Exception as e:
-        print("❌ Error occurred:", str(e))
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        print("❌ 오류 발생:", str(e))
+        return str(e), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    app.run()
